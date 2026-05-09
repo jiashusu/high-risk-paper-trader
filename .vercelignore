@@ -1,0 +1,15 @@
+.env
+.env.local
+.venv/
+.next/
+node_modules/
+data/
+logs/
+.pids/
+.playwright-cli/
+output/
+*.duckdb
+*.wal
+*.swp
+*.swo
+*.egg-info/

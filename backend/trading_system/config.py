@@ -1,9 +1,16 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_data_path(name: str) -> str:
+    if os.getenv("VERCEL"):
+        return f"/tmp/high-risk-paper-trader/{name}"
+    return f"data/{name}"
 
 
 class Settings(BaseSettings):
@@ -40,8 +47,8 @@ class Settings(BaseSettings):
     coinbase_api_key_name: str | None = None
     coinbase_api_private_key: str | None = None
 
-    database_path: str = "data/trading.duckdb"
-    report_dir: str = "data/reports"
+    database_path: str = Field(default_factory=lambda: _default_data_path("trading.duckdb"))
+    report_dir: str = Field(default_factory=lambda: _default_data_path("reports"))
 
     @property
     def origins(self) -> list[str]:

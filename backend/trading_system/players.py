@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 from .models import PlayerWorkspace
 from .runtime_config import CONFIG_FIELDS
 
-WORKSPACE_ROOT = Path("data/workspaces")
+WORKSPACE_ROOT = Path(os.getenv("PAPER_TRADER_WORKSPACE_ROOT") or ("/tmp/high-risk-paper-trader/workspaces" if os.getenv("VERCEL") else "data/workspaces"))
 INDEX_PATH = WORKSPACE_ROOT / "players.json"
 DEFAULT_PLAYER_ID = "owner"
 

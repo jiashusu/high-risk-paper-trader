@@ -494,8 +494,15 @@ export type ExpertAuditResponse = {
   next_hardening_steps: string[];
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const PLAYER_STORAGE_KEY = "high-risk-paper-trader-player";
+
+function apiBase() {
+  if (process.env.NEXT_PUBLIC_API_BASE_URL !== undefined) return process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    return "http://127.0.0.1:8010";
+  }
+  return "";
+}
 
 export function getActivePlayerId() {
   if (typeof window === "undefined") return "owner";
@@ -510,7 +517,7 @@ export function setActivePlayerId(playerId: string) {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const playerId = getActivePlayerId();
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${apiBase()}${path}`, {
     ...init,
     cache: "no-store",
     headers: { "Content-Type": "application/json", "X-Player-Id": playerId, ...(init?.headers ?? {}) },
