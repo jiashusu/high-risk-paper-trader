@@ -1,0 +1,34 @@
+{
+  "name": "high-risk-paper-trader",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "api": ".venv/bin/python -m uvicorn backend.trading_system.main:app --host 0.0.0.0 --port 8010 --reload",
+    "dev": "next dev --hostname 0.0.0.0",
+    "control": "bash scripts/tradectl.sh",
+    "control:start": "bash scripts/tradectl.sh start",
+    "control:stop": "bash scripts/tradectl.sh stop",
+    "control:status": "bash scripts/tradectl.sh status",
+    "control:restart": "bash scripts/tradectl.sh restart",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "lightweight-charts": "^4.2.3",
+    "lucide-react": "^0.468.0",
+    "next": "^16.0.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "^16.0.0",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  }
+}
