@@ -294,6 +294,7 @@ class OptionContractCandidate(BaseModel):
     score: float
     spread_pct: float = 0.0
     historical_spread_pct: float | None = None
+    spread_history_pct: list[float] = Field(default_factory=list)
     liquidity_score: float = Field(default=0.0, ge=0, le=1)
     slippage_tier: Literal["tight", "normal", "wide", "avoid", "unknown"] = "unknown"
     chain_rank: int = 0
@@ -326,8 +327,15 @@ class Position(BaseModel):
     implied_volatility: float | None = None
     spread_pct: float | None = None
     historical_spread_pct: float | None = None
+    spread_history_pct: list[float] = Field(default_factory=list)
     liquidity_score: float | None = None
     slippage_tier: Literal["tight", "normal", "wide", "avoid", "unknown"] = "unknown"
+    entry_bid: float | None = None
+    entry_ask: float | None = None
+    entry_mid: float | None = None
+    entry_limit_price: float | None = None
+    entry_fill_probability: float | None = None
+    entry_liquidity_gap: bool | None = None
     chain_rank: int | None = None
     chain_candidates: int | None = None
     theta_daily: float | None = None
@@ -361,8 +369,15 @@ class Trade(BaseModel):
     implied_volatility: float | None = None
     spread_pct: float | None = None
     historical_spread_pct: float | None = None
+    spread_history_pct: list[float] = Field(default_factory=list)
     liquidity_score: float | None = None
     slippage_tier: Literal["tight", "normal", "wide", "avoid", "unknown"] = "unknown"
+    bid: float | None = None
+    ask: float | None = None
+    mid_price: float | None = None
+    limit_price: float | None = None
+    fill_probability: float | None = None
+    liquidity_gap: bool | None = None
     chain_rank: int | None = None
     chain_candidates: int | None = None
     theta_daily: float | None = None
@@ -424,6 +439,37 @@ class StrategyBacktestSummary(BaseModel):
     worst_environment: str
 
 
+class StrategyWalkForwardWindow(BaseModel):
+    train_start: datetime
+    train_end: datetime
+    test_start: datetime
+    test_end: datetime
+    train_return_pct: float
+    test_return_pct: float
+    train_environment: str
+    test_environment: str
+    passed: bool
+
+
+class StrategyWalkForwardSummary(BaseModel):
+    windows: int
+    pass_rate: float
+    train_return_pct: float
+    out_of_sample_return_pct: float
+    efficiency_ratio: float
+    verdict: str
+    recent_windows: list[StrategyWalkForwardWindow]
+
+
+class StrategyVersionComparison(BaseModel):
+    current_version: str
+    previous_version: str
+    current_score: float
+    previous_score: float
+    delta: float
+    verdict: str
+
+
 class StrategyForwardPerformance(BaseModel):
     trades: int
     closed_round_trips: int
@@ -450,6 +496,9 @@ class StrategyLabEntry(BaseModel):
     forward: StrategyForwardPerformance
     backtest: StrategyBacktestSummary
     environments: list[StrategyEnvironmentPerformance]
+    walk_forward: StrategyWalkForwardSummary
+    version_comparison: StrategyVersionComparison
+    regime_tags: list[str]
 
 
 class StrategyLabResponse(BaseModel):

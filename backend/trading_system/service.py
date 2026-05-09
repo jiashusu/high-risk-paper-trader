@@ -860,7 +860,7 @@ class TradingResearchService:
             data_points=total_points,
             synthetic_symbols=synthetic_symbols,
             execution_model="Forward ledger mode: signals use prior market data, fills use the current paper tick, and repeated refreshes do not duplicate same-day entries.",
-            slippage_model="Spot fills use range/liquidity impact. Option fills use contract bid/ask, historical spread floor, liquidity tier, theta decay, DTE risk, and event IV crush.",
+            slippage_model="Spot fills use range/liquidity impact. Option fills use limit-order simulation with bid/ask, historical spread path, missed fills, liquidity gaps, theta decay, DTE risk, and event IV crush.",
             fee_model="US equities/ETFs: $0 commission model; crypto: 25 bps taker-style fee estimate; options: $0.65/contract conservative fee estimate.",
             account_source="Alpaca paper account read-only check" if account_status.healthy else "Local simulator only",
             source_statuses=source_statuses,
@@ -878,11 +878,13 @@ class TradingResearchService:
         allow_entry: bool,
     ) -> PaperBroker:
         await self._update_open_positions(broker, history, timestamp)
-        traded_today = any(trade.timestamp.date() == timestamp.date() for trade in broker.trades)
+        self._flush_execution_events(broker)
+        attempted_today = self._entry_attempted_today(broker, timestamp)
 
-        if allow_entry and data_quality_ok and not broker.positions and not traded_today:
+        if allow_entry and data_quality_ok and not broker.positions and not attempted_today:
             if option_contract and option_signal and option_signal.target_notional >= option_contract.ask * option_contract.multiplier + 0.65:
                 trade = broker.buy_option(option_signal, self._option_mark_candle(option_contract, timestamp), option_contract)
+                self._flush_execution_events(broker)
                 if trade:
                     self.ledger.record_event(
                         "signal",
@@ -911,8 +913,23 @@ class TradingResearchService:
 
         marks = await self._position_marks(broker, history, timestamp)
         broker.mark_to_market(marks, timestamp=timestamp)
+        self._flush_execution_events(broker)
         self.ledger.save_broker(broker, timestamp)
         return broker
+
+    def _entry_attempted_today(self, broker: PaperBroker, timestamp: datetime) -> bool:
+        if any(trade.timestamp.date() == timestamp.date() for trade in broker.trades):
+            return True
+        for event in self.ledger.latest_events(limit=80):
+            if event.get("kind") not in {"signal", "option_order_missed", "option_limit_fill"}:
+                continue
+            try:
+                event_time = datetime.fromisoformat(str(event.get("timestamp")).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if event_time.date() == timestamp.date():
+                return True
+        return False
 
     async def _update_open_positions(self, broker: PaperBroker, history: dict[str, list[Candle]], timestamp: datetime) -> None:
         for position in list(broker.positions.values()):
@@ -932,6 +949,7 @@ class TradingResearchService:
                     exit_reason = "Forward ledger exited because option liquidity/slippage deteriorated."
                 if exit_reason:
                     broker.close_option(self._option_mark_candle(contract, timestamp), self._exit_signal(position, timestamp), contract, exit_reason)
+                    self._flush_execution_events(broker)
             elif position.symbol in history and history[position.symbol]:
                 candle = history[position.symbol][-1].model_copy(update={"timestamp": timestamp})
                 broker.enforce_stops({position.symbol: candle}, self._exit_signal(position, timestamp))
@@ -968,6 +986,10 @@ class TradingResearchService:
             synthetic=False,
         )
 
+    def _flush_execution_events(self, broker: PaperBroker) -> None:
+        for event in broker.drain_execution_events():
+            self.ledger.record_event(event["kind"], event["payload"], event.get("timestamp"))
+
     def _contract_from_position(self, position, timestamp: datetime) -> OptionContractCandidate:
         dte = max(0, (position.expiration_date - timestamp.date()).days) if position.expiration_date else 0
         premium = max(0.01, position.market_price)
@@ -990,6 +1012,7 @@ class TradingResearchService:
             score=0,
             spread_pct=position.spread_pct or 6.0,
             historical_spread_pct=position.historical_spread_pct,
+            spread_history_pct=position.spread_history_pct,
             liquidity_score=position.liquidity_score or 0.2,
             slippage_tier=position.slippage_tier,
             chain_rank=position.chain_rank or 0,

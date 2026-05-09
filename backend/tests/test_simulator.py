@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from trading_system.models import Candle, OptionContractCandidate, SignalAction, StrategySignal
 from trading_system.market_data import SyntheticMarketDataProvider
 from trading_system.strategies import StrategyContext, select_strategy
-from trading_system.simulator import option_carry_adjusted_candle, realistic_option_fill_price, replay_options_week, replay_week
+from trading_system.simulator import option_carry_adjusted_candle, realistic_option_fill_price, replay_options_week, replay_week, simulate_option_limit_fill
 
 
 @pytest.mark.asyncio
@@ -174,3 +174,50 @@ def test_wide_option_tier_gets_worse_fill_than_tight() -> None:
     wide_fill, _ = realistic_option_fill_price(candle, wide, SignalAction.BUY)
 
     assert wide_fill > tight_fill
+
+
+def test_option_limit_fill_can_miss_on_liquidity_gap() -> None:
+    candle = Candle(
+        symbol="O:XYZ260522C00010000",
+        timestamp=datetime(2026, 5, 8, tzinfo=UTC),
+        open=1.0,
+        high=1.02,
+        low=0.98,
+        close=1.0,
+        volume=0,
+        source="massive_options",
+    )
+    contract = OptionContractCandidate(
+        ticker=candle.symbol,
+        underlying="XYZ",
+        contract_type="call",
+        expiration_date=date(2026, 5, 22),
+        strike=10,
+        premium=1.0,
+        bid=0.55,
+        ask=1.45,
+        mid=1.0,
+        delta=0.35,
+        theta=-0.03,
+        implied_volatility=1.2,
+        volume=0,
+        open_interest=3,
+        dte=14,
+        score=5,
+        spread_pct=90,
+        historical_spread_pct=80,
+        spread_history_pct=[70, 76, 80],
+        liquidity_score=0.04,
+        slippage_tier="avoid",
+        theta_daily=-0.03,
+        dte_risk="normal",
+        earnings_risk="none",
+        iv_crush_risk="low",
+        expected_iv_crush_pct=0,
+    )
+
+    decision = simulate_option_limit_fill(candle, contract, SignalAction.BUY)
+
+    assert not decision.filled
+    assert decision.liquidity_gap
+    assert "Liquidity gap" in (decision.missed_reason or "")

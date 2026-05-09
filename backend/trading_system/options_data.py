@@ -59,8 +59,16 @@ class OptionsDataProbe:
         candidates.sort(key=lambda item: item.score, reverse=True)
         top_with_history = []
         for candidate in candidates[:12]:
-            history_spread = await self.historical_spread_pct(candidate)
-            top_with_history.append(candidate.model_copy(update={"historical_spread_pct": history_spread}))
+            spread_history = await self.historical_spread_history_pct(candidate)
+            history_spread = round(median(spread_history), 2) if spread_history else None
+            top_with_history.append(
+                candidate.model_copy(
+                    update={
+                        "historical_spread_pct": history_spread,
+                        "spread_history_pct": spread_history,
+                    }
+                )
+            )
         candidates = [*top_with_history, *candidates[12:]]
         return OptionsScanResult(underlyings=underlyings, checked_contracts=checked, candidates=candidates, chain_summaries=summaries)
 
@@ -98,12 +106,16 @@ class OptionsDataProbe:
         )
 
     async def historical_spread_pct(self, contract: OptionContractCandidate, days: int = 20) -> float | None:
+        spreads = await self.historical_spread_history_pct(contract, days=days)
+        return round(median(spreads), 2) if spreads else None
+
+    async def historical_spread_history_pct(self, contract: OptionContractCandidate, days: int = 20) -> list[float]:
         candles = await self.historical_candles(contract, days=days)
         spreads = []
         for candle in candles[-days:]:
             _, bid, ask = option_quote_estimate(candle.close, int(candle.volume), contract.open_interest)
-            spreads.append((ask - bid) / max(candle.close, 0.01) * 100)
-        return round(median(spreads), 2) if spreads else None
+            spreads.append(round((ask - bid) / max(candle.close, 0.01) * 100, 2))
+        return spreads
 
     async def historical_candles(self, contract: OptionContractCandidate, days: int = 45) -> list[Candle]:
         if not self.settings.massive_api_key:

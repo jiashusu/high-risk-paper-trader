@@ -34,11 +34,15 @@ export function StrategiesClient() {
       entry.survival_reason,
       entry.elimination_reason,
       entry.forward.verdict,
+      entry.walk_forward?.verdict,
+      entry.version_comparison?.verdict,
       entry.parameter_version.description,
       ...entry.risk_notes,
       ...entry.data_requirements,
+      ...(entry.regime_tags ?? []),
       ...entry.environments.flatMap((env) => [env.environment, env.verdict]),
-    ]);
+      ...(entry.walk_forward?.recent_windows ?? []).flatMap((window) => [window.train_environment, window.test_environment]),
+    ]).filter((text): text is string => Boolean(text));
   }, [lab]);
   const tr = useTranslatedTexts(dynamicTexts, language);
   const z = (text: string | null | undefined) => {
@@ -49,6 +53,10 @@ export function StrategiesClient() {
 
   if (error) return <div className="error">{t.common.apiUnavailable}: {error}</div>;
   if (!data || !lab || !activeStrategy || !selected) return <div className="loading">{t.common.loadingStrategies}</div>;
+
+  const walkForward = walkForwardOrDefault(selected);
+  const versionComparison = versionComparisonOrDefault(selected);
+  const regimeTags = selected.regime_tags ?? [];
 
   return (
     <>
@@ -84,6 +92,7 @@ export function StrategiesClient() {
             <span>{copy.backtestReturn} <strong>{formatPct(selected.backtest.total_return_pct)}</strong></span>
             <span>{copy.bestEnv} <strong>{envLabel(selected.backtest.best_environment, language)}</strong></span>
             <span>{copy.version} <strong>{selected.parameter_version.version_id}</strong></span>
+            <span>{copy.oosReturn} <strong>{formatPct(walkForward.out_of_sample_return_pct)}</strong></span>
           </div>
         </div>
 
@@ -131,6 +140,8 @@ export function StrategiesClient() {
             <Metric label={copy.closedTrips} value={`${selected.forward.closed_round_trips}`} detail={`${copy.winRate} ${(selected.forward.win_rate * 100).toFixed(0)}%`} />
             <Metric label={copy.backtest} value={formatPct(selected.backtest.total_return_pct)} detail={`${copy.samples} ${selected.backtest.sample_size}`} />
             <Metric label={copy.maxDrawdown} value={formatPct(-selected.backtest.max_drawdown_pct)} detail={`${copy.worstEnv} ${envLabel(selected.backtest.worst_environment, language)}`} />
+            <Metric label={copy.walkForward} value={`${(walkForward.pass_rate * 100).toFixed(0)}%`} detail={z(walkForward.verdict)} />
+            <Metric label={copy.oosReturn} value={formatPct(walkForward.out_of_sample_return_pct)} detail={`${copy.efficiency} ${walkForward.efficiency_ratio.toFixed(2)}`} />
           </div>
 
           <section className="lab-reason-grid">
@@ -159,6 +170,26 @@ export function StrategiesClient() {
             </div>
           </section>
 
+          <section className="lab-section">
+            <h2><FlaskConical size={18} /> {copy.walkForwardTitle}</h2>
+            <p className="muted">{z(walkForward.verdict)}</p>
+            <div className="environment-grid">
+              {walkForward.recent_windows.map((window) => (
+                <div className="environment-card" key={`${window.train_start}-${window.test_end}`}>
+                  <div className="row">
+                    <strong>{window.passed ? copy.passed : copy.failed}</strong>
+                    <span className={window.test_return_pct >= 0 ? "positive" : "negative"}>{formatPct(window.test_return_pct)}</span>
+                  </div>
+                  <div className="contract-grid">
+                    <span>{copy.train} <strong>{formatPct(window.train_return_pct)}</strong></span>
+                    <span>{copy.test} <strong>{envLabel(window.test_environment, language)}</strong></span>
+                    <span>{copy.regime} <strong>{envLabel(window.train_environment, language)}</strong></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
           <section className="split-layout stack-gap">
             <div className="panel-inner">
               <h2><SlidersHorizontal size={18} /> {copy.parameters}</h2>
@@ -172,6 +203,11 @@ export function StrategiesClient() {
             <div className="panel-inner">
               <h2><FileClock size={18} /> {copy.dataAndRisk}</h2>
               <ul className="status-list">
+                <li className="position-item">
+                  {copy.versionCompare}: {versionComparison.previous_version} → {versionComparison.current_version} · {versionComparison.delta.toFixed(1)} pts
+                  <p className="muted">{z(versionComparison.verdict)}</p>
+                </li>
+                {regimeTags.map((tag) => <li className="position-item" key={tag}>{z(tag)}</li>)}
                 {selected.data_requirements.map((item) => <li className="position-item" key={item}>{dataLabel(item, language)}</li>)}
                 {selected.risk_notes.map((item) => <li className="warning-item" key={item}>{z(item)}</li>)}
               </ul>
@@ -191,6 +227,29 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
       <small>{detail}</small>
     </div>
   );
+}
+
+function walkForwardOrDefault(entry: StrategyLabEntry) {
+  return entry.walk_forward ?? {
+    windows: 0,
+    pass_rate: 0,
+    train_return_pct: 0,
+    out_of_sample_return_pct: 0,
+    efficiency_ratio: 0,
+    verdict: "等待新版 API 返回 walk-forward 样本外验证。",
+    recent_windows: [],
+  };
+}
+
+function versionComparisonOrDefault(entry: StrategyLabEntry) {
+  return entry.version_comparison ?? {
+    current_version: entry.parameter_version.version_id,
+    previous_version: "previous",
+    current_score: entry.score,
+    previous_score: entry.score,
+    delta: 0,
+    verdict: "等待新版 API 返回策略版本对照。",
+  };
 }
 
 function ReasonCard({ title, body, warning }: { title: string; body: string; warning?: boolean }) {
@@ -287,6 +346,9 @@ function getStrategiesCopy(language: "en" | "zh") {
       samples: "samples",
       maxDrawdown: "Max DD",
       worstEnv: "worst",
+      walkForward: "Walk-forward",
+      oosReturn: "OOS return",
+      efficiency: "efficiency",
       liveReason: "Why online",
       survivalReason: "Why it survives",
       eliminationReason: "Cut reason",
@@ -295,6 +357,13 @@ function getStrategiesCopy(language: "en" | "zh") {
       hit: "Hit",
       parameters: "Parameter version",
       dataAndRisk: "Data + risk requirements",
+      walkForwardTitle: "Walk-forward / out-of-sample",
+      passed: "passed",
+      failed: "failed",
+      train: "train",
+      test: "test",
+      regime: "regime",
+      versionCompare: "Version comparison",
     };
   }
   return {
@@ -322,6 +391,9 @@ function getStrategiesCopy(language: "en" | "zh") {
     samples: "样本",
     maxDrawdown: "最大回撤",
     worstEnv: "最差环境",
+    walkForward: "滚动验证",
+    oosReturn: "样本外收益",
+    efficiency: "效率",
     liveReason: "为什么上线",
     survivalReason: "为什么还活着",
     eliminationReason: "淘汰原因",
@@ -330,5 +402,12 @@ function getStrategiesCopy(language: "en" | "zh") {
     hit: "命中",
     parameters: "参数版本",
     dataAndRisk: "数据和风险要求",
+    walkForwardTitle: "Walk-forward / 样本外验证",
+    passed: "通过",
+    failed: "失败",
+    train: "训练",
+    test: "测试",
+    regime: "环境",
+    versionCompare: "版本对照",
   };
 }

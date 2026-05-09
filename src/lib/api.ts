@@ -87,6 +87,17 @@ export type Trade = {
   delta?: number | null;
   theta?: number | null;
   implied_volatility?: number | null;
+  spread_pct?: number | null;
+  historical_spread_pct?: number | null;
+  spread_history_pct?: number[];
+  liquidity_score?: number | null;
+  slippage_tier?: string;
+  bid?: number | null;
+  ask?: number | null;
+  mid_price?: number | null;
+  limit_price?: number | null;
+  fill_probability?: number | null;
+  liquidity_gap?: boolean | null;
 };
 
 export type Position = {
@@ -107,6 +118,17 @@ export type Position = {
   delta?: number | null;
   theta?: number | null;
   implied_volatility?: number | null;
+  spread_pct?: number | null;
+  historical_spread_pct?: number | null;
+  spread_history_pct?: number[];
+  liquidity_score?: number | null;
+  slippage_tier?: string;
+  entry_bid?: number | null;
+  entry_ask?: number | null;
+  entry_mid?: number | null;
+  entry_limit_price?: number | null;
+  entry_fill_probability?: number | null;
+  entry_liquidity_gap?: boolean | null;
 };
 
 export type PortfolioSnapshot = {
@@ -155,6 +177,37 @@ export type StrategyBacktestSummary = {
   worst_environment: string;
 };
 
+export type StrategyWalkForwardWindow = {
+  train_start: string;
+  train_end: string;
+  test_start: string;
+  test_end: string;
+  train_return_pct: number;
+  test_return_pct: number;
+  train_environment: string;
+  test_environment: string;
+  passed: boolean;
+};
+
+export type StrategyWalkForwardSummary = {
+  windows: number;
+  pass_rate: number;
+  train_return_pct: number;
+  out_of_sample_return_pct: number;
+  efficiency_ratio: number;
+  verdict: string;
+  recent_windows: StrategyWalkForwardWindow[];
+};
+
+export type StrategyVersionComparison = {
+  current_version: string;
+  previous_version: string;
+  current_score: number;
+  previous_score: number;
+  delta: number;
+  verdict: string;
+};
+
 export type StrategyForwardPerformance = {
   trades: number;
   closed_round_trips: number;
@@ -187,6 +240,9 @@ export type StrategyLabEntry = {
   forward: StrategyForwardPerformance;
   backtest: StrategyBacktestSummary;
   environments: StrategyEnvironmentPerformance[];
+  walk_forward: StrategyWalkForwardSummary;
+  version_comparison: StrategyVersionComparison;
+  regime_tags: string[];
 };
 
 export type StrategyLabResponse = {
