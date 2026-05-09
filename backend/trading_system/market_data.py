@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import random
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -100,7 +101,7 @@ class MassiveMarketDataProvider(MarketDataProvider):
     def __init__(self, settings: Settings) -> None:
         super().__init__()
         self.settings = settings
-        self.cache_dir = Path("data/cache/market")
+        self.cache_dir = Path(os.getenv("PAPER_TRADER_MARKET_CACHE_DIR") or ("/tmp/high-risk-paper-trader/cache/market" if os.getenv("VERCEL") else "data/cache/market"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def get_history(self, symbols: list[str], days: int = 45) -> dict[str, list[Candle]]:

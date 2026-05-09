@@ -27,3 +27,4 @@ reports/*.pdf
 logs/
 .pids/
 .playwright-cli/
+.vercel
