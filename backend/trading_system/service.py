@@ -860,7 +860,7 @@ class TradingResearchService:
             data_points=total_points,
             synthetic_symbols=synthetic_symbols,
             execution_model="Forward ledger mode: signals use prior market data, fills use the current paper tick, and repeated refreshes do not duplicate same-day entries.",
-            slippage_model="Spot fills use range/liquidity impact. Option fills use limit-order simulation with bid/ask, historical spread path, missed fills, liquidity gaps, theta decay, DTE risk, and event IV crush.",
+            slippage_model="Spot fills use range/liquidity impact. Option fills use NBBO bid/ask, quote age, last-trade prints, queue-position probability, historical spread path, missed fills, liquidity gaps, theta decay, DTE risk, and event IV crush.",
             fee_model="US equities/ETFs: $0 commission model; crypto: 25 bps taker-style fee estimate; options: $0.65/contract conservative fee estimate.",
             account_source="Alpaca paper account read-only check" if account_status.healthy else "Local simulator only",
             source_statuses=source_statuses,
