@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from statistics import mean
 
@@ -22,6 +23,40 @@ from .models import (
 )
 from .simulator import PaperBroker
 from .strategies import BUILT_IN_STRATEGIES, Strategy, StrategyContext
+
+
+@dataclass(frozen=True)
+class ReplayMetrics:
+    return_pct: float
+    ending_equity: float
+    max_drawdown_pct: float
+    trades: int
+    missed_fills: int
+    won: bool
+
+
+class PreviousVersionStrategy(Strategy):
+    def __init__(self, base: Strategy, previous_version: str) -> None:
+        self.base = base
+        self.strategy_id = base.strategy_id
+        self.name = f"{base.name} Previous"
+        self.base_heat = max(0.0, base.base_heat - 0.04)
+        self.reliability = max(0.0, base.reliability - 0.06)
+        self.previous_version = previous_version
+
+    def generate(self, context: StrategyContext) -> StrategySignal:
+        signal = self.base.generate(context)
+        return signal.model_copy(
+            update={
+                "strategy_id": self.strategy_id,
+                "strategy_name": self.name,
+                "confidence": round(max(0.05, signal.confidence * 0.93), 2),
+                "target_notional": round(signal.target_notional * 1.12, 2),
+                "stop_loss_pct": min(0.5, signal.stop_loss_pct * 1.22),
+                "take_profit_pct": max(0.02, signal.take_profit_pct * 0.86),
+                "reason": f"Previous version {self.previous_version}: {signal.reason}",
+            }
+        )
 
 
 STRATEGY_METADATA: dict[str, dict] = {
@@ -135,9 +170,10 @@ def _build_entry(
     environments = _environment_performance(strategy, context)
     backtest = _backtest_summary(environments)
     walk_forward = _walk_forward_summary(strategy, context)
+    previous_walk_forward = _walk_forward_summary(PreviousVersionStrategy(strategy, metadata.get("previous_version", "previous")), context)
     forward = _forward_performance(strategy.strategy_id, broker.trades, float(ledger_summary.get("completed_forward_weeks", 0.0)))
     score_value = score.score if score else 0.0
-    version_comparison = _version_comparison(metadata, score_value, backtest, walk_forward)
+    version_comparison = _version_comparison(metadata, walk_forward, previous_walk_forward)
     regime_tags = _regime_tags(environments, walk_forward)
     status = _status(strategy.strategy_id, active_id, score, forward, backtest, walk_forward, data_anomalies)
     return StrategyLabEntry(
@@ -145,7 +181,7 @@ def _build_entry(
         name=strategy.name,
         rank=rank,
         status=status,
-        score=score_value,
+        score=round(_empirical_version_score(walk_forward, fallback=score_value), 2),
         parameter_version=StrategyParameterVersion(
             version_id=metadata["version"],
             description=f"{strategy.name} 参数版本，随 forward 表现和风控复盘迭代。",
@@ -179,13 +215,12 @@ def _environment_performance(strategy: Strategy, context: StrategyContext) -> li
         if not window_history:
             continue
         window_context = StrategyContext(history=window_history, heat=context.heat, cash=context.cash, equity=context.equity)
-        signal = strategy.generate(window_context)
-        score = strategy.score(window_context)
+        replay = _replay_strategy_window(strategy, window_context, window_history, initial_cash=context.equity or 500)
         market_env = _classify_environment(window_history)
-        simulated_return = score.weekly_return_pct if signal.action == SignalAction.BUY else 0.0
+        simulated_return = replay.return_pct
         if strategy.strategy_id == "risk_parity_flat":
             simulated_return = 0.0
-        buckets[market_env].append((simulated_return, score.max_drawdown_pct, simulated_return > 0))
+        buckets[market_env].append((simulated_return, replay.max_drawdown_pct, replay.won))
 
     if not buckets:
         return [
@@ -249,24 +284,27 @@ def _walk_forward_summary(strategy: Strategy, context: StrategyContext) -> Strat
         test_history = _slice_history(context.history, start + train_days, start + train_days + test_days)
         if not train_history or not test_history:
             continue
-        train_context = StrategyContext(history=train_history, heat=context.heat, cash=context.cash, equity=context.equity)
-        test_context = StrategyContext(history=test_history, heat=context.heat, cash=context.cash, equity=context.equity)
-        train_return = _window_strategy_return(strategy, train_context)
-        test_return = _window_strategy_return(strategy, test_context)
+        train_context = StrategyContext(history=train_history, heat=context.heat, cash=1000, equity=1000)
+        train_replay = _replay_strategy_window(strategy, train_context, train_history)
+        test_replay = _replay_strategy_window(strategy, train_context, test_history)
         train_start, train_end = _history_bounds(train_history)
         test_start, test_end = _history_bounds(test_history)
-        passed = train_return >= 0 and test_return > -4 and (test_return >= 0 or train_return <= 8)
+        passed = train_replay.return_pct >= 0 and test_replay.return_pct > -4 and (test_replay.return_pct >= 0 or train_replay.return_pct <= 8)
         windows.append(
             StrategyWalkForwardWindow(
                 train_start=train_start,
                 train_end=train_end,
                 test_start=test_start,
                 test_end=test_end,
-                train_return_pct=round(train_return, 2),
-                test_return_pct=round(test_return, 2),
+                train_return_pct=round(train_replay.return_pct, 2),
+                test_return_pct=round(test_replay.return_pct, 2),
                 train_environment=_classify_environment(train_history),
                 test_environment=_classify_environment(test_history),
                 passed=passed,
+                ending_equity=round(test_replay.ending_equity, 2),
+                max_drawdown_pct=round(test_replay.max_drawdown_pct, 2),
+                trades=test_replay.trades,
+                missed_fills=test_replay.missed_fills,
             )
         )
 
@@ -310,45 +348,86 @@ def _history_bounds(history: dict[str, list[Candle]]) -> tuple[datetime, datetim
     return min(timestamps), max(timestamps)
 
 
+def _replay_strategy_window(
+    strategy: Strategy,
+    signal_context: StrategyContext,
+    replay_history: dict[str, list[Candle]],
+    initial_cash: float = 1000,
+) -> ReplayMetrics:
+    if strategy.strategy_id == "risk_parity_flat" or not replay_history:
+        return ReplayMetrics(return_pct=0.0, ending_equity=initial_cash, max_drawdown_pct=0.0, trades=0, missed_fills=0, won=False)
+
+    signal = strategy.generate(signal_context)
+    broker = PaperBroker(initial_cash=initial_cash)
+    days = min((len(series) for series in replay_history.values()), default=0)
+    if days < 3 or signal.action != SignalAction.BUY or signal.symbol not in replay_history:
+        return ReplayMetrics(return_pct=0.0, ending_equity=initial_cash, max_drawdown_pct=0.0, trades=0, missed_fills=0, won=False)
+
+    sized_signal = signal.model_copy(update={"target_notional": min(signal.target_notional, initial_cash * 0.85)})
+    for idx in range(days):
+        latest = {symbol: candles[idx] for symbol, candles in replay_history.items() if idx < len(candles)}
+        if idx == 1 and sized_signal.symbol in latest:
+            broker.execute(sized_signal, latest[sized_signal.symbol])
+        broker.enforce_stops(latest, sized_signal)
+        timestamp = next(iter(latest.values())).timestamp if latest else datetime.now(UTC)
+        broker.mark_to_market(latest, timestamp=timestamp)
+
+    ending_equity = broker.equity_curve[-1].equity if broker.equity_curve else initial_cash
+    return_pct = (ending_equity / initial_cash - 1) * 100 if initial_cash else 0.0
+    return ReplayMetrics(
+        return_pct=round(return_pct, 2),
+        ending_equity=round(ending_equity, 2),
+        max_drawdown_pct=round(broker._max_drawdown_pct(), 2),
+        trades=len(broker.trades),
+        missed_fills=len([event for event in broker.execution_events if event.get("kind", "").endswith("missed")]),
+        won=return_pct > 0,
+    )
+
+
 def _window_strategy_return(strategy: Strategy, context: StrategyContext) -> float:
-    signal = strategy.generate(context)
-    if strategy.strategy_id == "risk_parity_flat" or signal.action != SignalAction.BUY:
-        return 0.0
-    return strategy.score(context).weekly_return_pct
+    return _replay_strategy_window(strategy, context, context.history).return_pct
 
 
 def _version_comparison(
     metadata: dict,
-    score_value: float,
-    backtest: StrategyBacktestSummary,
     walk_forward: StrategyWalkForwardSummary,
+    previous_walk_forward: StrategyWalkForwardSummary,
 ) -> StrategyVersionComparison:
-    penalty_removed = 0.0
-    if backtest.max_drawdown_pct > 18:
-        penalty_removed += 3.5
-    if walk_forward.out_of_sample_return_pct < 0:
-        penalty_removed += 4.0
-    if walk_forward.pass_rate < 0.45:
-        penalty_removed += 2.5
-    if backtest.sample_size < 8:
-        penalty_removed -= 1.5
-    previous_score = max(0.0, score_value - penalty_removed + 1.0)
-    delta = score_value - previous_score
+    current_score = _empirical_version_score(walk_forward)
+    previous_score = _empirical_version_score(previous_walk_forward)
+    delta = current_score - previous_score
     if walk_forward.windows == 0:
         verdict = "无法证明新版优于旧版：walk-forward 样本不足。"
-    elif delta >= 2 and walk_forward.pass_rate >= 0.45:
-        verdict = "新版保留：样本外表现和风险惩罚优于旧版基线。"
+    elif delta >= 2 and walk_forward.pass_rate >= previous_walk_forward.pass_rate:
+        verdict = "新版保留：真实逐笔 walk-forward 回放优于上一版。"
     elif delta < 0:
-        verdict = "新版没有明显优势：只能留在候选，不允许因为新而上线。"
+        verdict = "新版没有跑赢上一版：只能留在候选，不允许因为新而上线。"
     else:
-        verdict = "新版优势很小：继续并行观察。"
+        verdict = "新版优势很小：继续和上一版并行观察。"
     return StrategyVersionComparison(
         current_version=metadata["version"],
         previous_version=metadata.get("previous_version", "previous"),
-        current_score=round(score_value, 2),
+        current_score=round(current_score, 2),
         previous_score=round(previous_score, 2),
         delta=round(delta, 2),
         verdict=verdict,
+    )
+
+
+def _empirical_version_score(walk_forward: StrategyWalkForwardSummary, fallback: float = 0.0) -> float:
+    if walk_forward.windows == 0:
+        return fallback
+    avg_drawdown = mean([window.max_drawdown_pct for window in walk_forward.recent_windows]) if walk_forward.recent_windows else 0.0
+    activity_penalty = 2.0 if all(window.trades == 0 for window in walk_forward.recent_windows) else 0.0
+    missed_penalty = sum(window.missed_fills for window in walk_forward.recent_windows) * 0.5
+    return max(
+        0.0,
+        walk_forward.pass_rate * 45
+        + walk_forward.out_of_sample_return_pct * 1.15
+        + walk_forward.efficiency_ratio * 8
+        - avg_drawdown * 1.1
+        - activity_penalty
+        - missed_penalty,
     )
 
 

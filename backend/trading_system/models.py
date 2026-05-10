@@ -295,6 +295,12 @@ class OptionContractCandidate(BaseModel):
     spread_pct: float = 0.0
     historical_spread_pct: float | None = None
     spread_history_pct: list[float] = Field(default_factory=list)
+    quote_timestamp: datetime | None = None
+    quote_age_seconds: float | None = None
+    last_trade_price: float | None = None
+    last_trade_size: int | None = None
+    last_trade_timestamp: datetime | None = None
+    microstructure_score: float = Field(default=0.0, ge=0, le=1)
     liquidity_score: float = Field(default=0.0, ge=0, le=1)
     slippage_tier: Literal["tight", "normal", "wide", "avoid", "unknown"] = "unknown"
     chain_rank: int = 0
@@ -328,6 +334,12 @@ class Position(BaseModel):
     spread_pct: float | None = None
     historical_spread_pct: float | None = None
     spread_history_pct: list[float] = Field(default_factory=list)
+    quote_timestamp: datetime | None = None
+    quote_age_seconds: float | None = None
+    last_trade_price: float | None = None
+    last_trade_size: int | None = None
+    last_trade_timestamp: datetime | None = None
+    microstructure_score: float | None = None
     liquidity_score: float | None = None
     slippage_tier: Literal["tight", "normal", "wide", "avoid", "unknown"] = "unknown"
     entry_bid: float | None = None
@@ -336,6 +348,7 @@ class Position(BaseModel):
     entry_limit_price: float | None = None
     entry_fill_probability: float | None = None
     entry_liquidity_gap: bool | None = None
+    entry_queue_position_pct: float | None = None
     chain_rank: int | None = None
     chain_candidates: int | None = None
     theta_daily: float | None = None
@@ -370,6 +383,12 @@ class Trade(BaseModel):
     spread_pct: float | None = None
     historical_spread_pct: float | None = None
     spread_history_pct: list[float] = Field(default_factory=list)
+    quote_timestamp: datetime | None = None
+    quote_age_seconds: float | None = None
+    last_trade_price: float | None = None
+    last_trade_size: int | None = None
+    last_trade_timestamp: datetime | None = None
+    microstructure_score: float | None = None
     liquidity_score: float | None = None
     slippage_tier: Literal["tight", "normal", "wide", "avoid", "unknown"] = "unknown"
     bid: float | None = None
@@ -378,6 +397,7 @@ class Trade(BaseModel):
     limit_price: float | None = None
     fill_probability: float | None = None
     liquidity_gap: bool | None = None
+    queue_position_pct: float | None = None
     chain_rank: int | None = None
     chain_candidates: int | None = None
     theta_daily: float | None = None
@@ -449,6 +469,10 @@ class StrategyWalkForwardWindow(BaseModel):
     train_environment: str
     test_environment: str
     passed: bool
+    ending_equity: float
+    max_drawdown_pct: float
+    trades: int
+    missed_fills: int
 
 
 class StrategyWalkForwardSummary(BaseModel):

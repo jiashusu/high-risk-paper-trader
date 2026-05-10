@@ -66,6 +66,7 @@ class ForwardLedger:
             con.execute("DELETE FROM ledger_trades")
             con.execute("DELETE FROM ledger_equity")
             con.execute("DELETE FROM ledger_events")
+            con.execute("DELETE FROM ledger_order_attempts")
             con.execute("DELETE FROM ledger_state WHERE id = 1")
             con.execute(
                 "INSERT INTO ledger_state VALUES (1, ?, ?, ?, ?, NULL)",
@@ -84,6 +85,71 @@ class ForwardLedger:
                 "INSERT INTO ledger_events VALUES (?, ?, ?, ?)",
                 [str(uuid4()), now, kind, json.dumps(payload, default=str)],
             )
+
+    def record_order_attempt(
+        self,
+        timestamp: datetime,
+        strategy_id: str,
+        symbol: str,
+        side: str,
+        instrument_type: str,
+        status: str,
+        payload: dict,
+    ) -> None:
+        self._ensure_started()
+        trade_date = timestamp.date()
+        with self._connect() as con:
+            con.execute(
+                """
+                DELETE FROM ledger_order_attempts
+                WHERE trade_date = ? AND strategy_id = ? AND symbol = ? AND side = ? AND instrument_type = ?
+                """,
+                [trade_date, strategy_id, symbol, side, instrument_type],
+            )
+            con.execute(
+                "INSERT INTO ledger_order_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [str(uuid4()), trade_date, timestamp, strategy_id, symbol, side, instrument_type, status, json.dumps(payload, default=str)],
+            )
+
+    def order_attempted_on(self, timestamp: datetime, strategy_id: str | None = None, symbol: str | None = None) -> bool:
+        self._ensure_started()
+        query = "SELECT COUNT(*) FROM ledger_order_attempts WHERE trade_date = ?"
+        params: list = [timestamp.date()]
+        if strategy_id:
+            query += " AND strategy_id = ?"
+            params.append(strategy_id)
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol)
+        with self._connect() as con:
+            count = con.execute(query, params).fetchone()[0]
+        return bool(count)
+
+    def latest_order_attempts(self, limit: int = 20) -> list[dict]:
+        self._ensure_started()
+        with self._connect() as con:
+            rows = con.execute(
+                """
+                SELECT trade_date, timestamp, strategy_id, symbol, side, instrument_type, status, payload
+                FROM ledger_order_attempts
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchall()
+        return [
+            {
+                "trade_date": str(row[0]),
+                "timestamp": str(row[1]),
+                "strategy_id": row[2],
+                "symbol": row[3],
+                "side": row[4],
+                "instrument_type": row[5],
+                "status": row[6],
+                "payload": json.loads(row[7]),
+            }
+            for row in rows
+        ]
 
     def latest_events(self, limit: int = 20) -> list[dict]:
         self._ensure_started()
@@ -186,6 +252,22 @@ class ForwardLedger:
                     timestamp TIMESTAMP,
                     kind VARCHAR,
                     payload VARCHAR
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ledger_order_attempts (
+                    attempt_id VARCHAR PRIMARY KEY,
+                    trade_date DATE,
+                    timestamp TIMESTAMP,
+                    strategy_id VARCHAR,
+                    symbol VARCHAR,
+                    side VARCHAR,
+                    instrument_type VARCHAR,
+                    status VARCHAR,
+                    payload VARCHAR,
+                    UNIQUE(trade_date, strategy_id, symbol, side, instrument_type)
                 )
                 """
             )

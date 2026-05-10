@@ -36,6 +36,6 @@ def test_forward_tick_treats_missed_option_order_as_daily_attempt(tmp_path) -> N
     )
     timestamp = datetime(2026, 5, 9, 15, tzinfo=UTC)
     broker = service.ledger.load_broker()
-    service.ledger.record_event("option_order_missed", {"symbol": "O:TEST"}, timestamp)
+    service.ledger.record_order_attempt(timestamp, "test", "O:TEST", "buy", "option", "missed", {})
 
     assert service._entry_attempted_today(broker, timestamp)

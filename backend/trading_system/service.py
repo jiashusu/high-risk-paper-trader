@@ -885,6 +885,19 @@ class TradingResearchService:
             if option_contract and option_signal and option_signal.target_notional >= option_contract.ask * option_contract.multiplier + 0.65:
                 trade = broker.buy_option(option_signal, self._option_mark_candle(option_contract, timestamp), option_contract)
                 self._flush_execution_events(broker)
+                self.ledger.record_order_attempt(
+                    timestamp=timestamp,
+                    strategy_id=option_signal.strategy_id,
+                    symbol=option_signal.symbol,
+                    side=option_signal.action.value,
+                    instrument_type=option_signal.instrument_type,
+                    status="filled" if trade else "missed_or_rejected",
+                    payload={
+                        "reason": option_signal.reason,
+                        "contract": option_contract.model_dump(mode="json"),
+                        "trade_id": trade.trade_id if trade else None,
+                    },
+                )
                 if trade:
                     self.ledger.record_event(
                         "signal",
@@ -899,7 +912,16 @@ class TradingResearchService:
                     )
             elif adjusted_signal.action == SignalAction.BUY and adjusted_signal.symbol in history and history[adjusted_signal.symbol]:
                 candle = history[adjusted_signal.symbol][-1].model_copy(update={"timestamp": timestamp})
-                broker.execute(adjusted_signal, candle)
+                trade = broker.execute(adjusted_signal, candle)
+                self.ledger.record_order_attempt(
+                    timestamp=timestamp,
+                    strategy_id=adjusted_signal.strategy_id,
+                    symbol=adjusted_signal.symbol,
+                    side=adjusted_signal.action.value,
+                    instrument_type=adjusted_signal.instrument_type,
+                    status="filled" if trade else "rejected",
+                    payload={"reason": adjusted_signal.reason, "trade_id": trade.trade_id if trade else None},
+                )
                 self.ledger.record_event(
                     "signal",
                     {
@@ -920,16 +942,7 @@ class TradingResearchService:
     def _entry_attempted_today(self, broker: PaperBroker, timestamp: datetime) -> bool:
         if any(trade.timestamp.date() == timestamp.date() for trade in broker.trades):
             return True
-        for event in self.ledger.latest_events(limit=80):
-            if event.get("kind") not in {"signal", "option_order_missed", "option_limit_fill"}:
-                continue
-            try:
-                event_time = datetime.fromisoformat(str(event.get("timestamp")).replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if event_time.date() == timestamp.date():
-                return True
-        return False
+        return self.ledger.order_attempted_on(timestamp)
 
     async def _update_open_positions(self, broker: PaperBroker, history: dict[str, list[Candle]], timestamp: datetime) -> None:
         for position in list(broker.positions.values()):
@@ -1013,6 +1026,12 @@ class TradingResearchService:
             spread_pct=position.spread_pct or 6.0,
             historical_spread_pct=position.historical_spread_pct,
             spread_history_pct=position.spread_history_pct,
+            quote_timestamp=position.quote_timestamp,
+            quote_age_seconds=position.quote_age_seconds,
+            last_trade_price=position.last_trade_price,
+            last_trade_size=position.last_trade_size,
+            last_trade_timestamp=position.last_trade_timestamp,
+            microstructure_score=position.microstructure_score or 0.2,
             liquidity_score=position.liquidity_score or 0.2,
             slippage_tier=position.slippage_tier,
             chain_rank=position.chain_rank or 0,

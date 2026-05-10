@@ -34,3 +34,17 @@ def test_forward_ledger_persists_cash_and_deduplicates_trades(tmp_path) -> None:
     assert reloaded.cash == 420
     assert len(reloaded.trades) == 1
     assert reloaded.trades[0].instrument_type == "option"
+
+
+def test_order_attempts_are_unique_by_day_strategy_symbol(tmp_path) -> None:
+    ledger = ForwardLedger(str(tmp_path / "ledger.duckdb"), initial_cash=500)
+    timestamp = datetime(2026, 5, 9, tzinfo=UTC)
+
+    ledger.record_order_attempt(timestamp, "momentum", "NVDA", "buy", "option", "missed", {"try": 1})
+    ledger.record_order_attempt(timestamp, "momentum", "NVDA", "buy", "option", "filled", {"try": 2})
+
+    attempts = ledger.latest_order_attempts()
+    assert ledger.order_attempted_on(timestamp)
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "filled"
+    assert attempts[0]["payload"]["try"] == 2

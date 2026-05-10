@@ -221,3 +221,54 @@ def test_option_limit_fill_can_miss_on_liquidity_gap() -> None:
     assert not decision.filled
     assert decision.liquidity_gap
     assert "Liquidity gap" in (decision.missed_reason or "")
+
+
+def test_snapshot_fill_uses_last_trade_and_queue_not_auto_touch() -> None:
+    timestamp = datetime(2026, 5, 8, tzinfo=UTC)
+    candle = Candle(
+        symbol="O:NVDA260522C00220000",
+        timestamp=timestamp,
+        open=3.0,
+        high=3.1,
+        low=2.9,
+        close=3.0,
+        volume=1500,
+        source="massive_options_snapshot",
+    )
+    base = dict(
+        ticker=candle.symbol,
+        underlying="NVDA",
+        contract_type="call",
+        expiration_date=date(2026, 5, 22),
+        strike=220,
+        premium=3.0,
+        bid=2.95,
+        ask=3.05,
+        mid=3.0,
+        delta=0.45,
+        theta=-0.12,
+        implied_volatility=0.55,
+        volume=1500,
+        open_interest=12000,
+        dte=14,
+        score=90,
+        spread_pct=3.3,
+        liquidity_score=0.82,
+        slippage_tier="tight",
+        quote_age_seconds=10,
+        microstructure_score=0.9,
+        theta_daily=-0.12,
+        dte_risk="normal",
+        earnings_risk="none",
+        iv_crush_risk="low",
+        expected_iv_crush_pct=0,
+    )
+    without_print = OptionContractCandidate(**base)
+    with_print = OptionContractCandidate(**base, last_trade_price=3.0, last_trade_size=20, last_trade_timestamp=timestamp)
+
+    missed = simulate_option_limit_fill(candle, without_print, SignalAction.BUY)
+    filled = simulate_option_limit_fill(candle, with_print, SignalAction.BUY)
+
+    assert missed.queue_position_pct is not None
+    assert not missed.filled
+    assert filled.filled

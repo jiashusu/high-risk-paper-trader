@@ -24,6 +24,10 @@ class OptionFillDecision:
     historical_spread_pct: float | None
     fill_probability: float
     liquidity_gap: bool
+    queue_position_pct: float
+    quote_age_seconds: float | None
+    last_trade_price: float | None
+    last_trade_size: int | None
     missed_reason: str | None = None
 
 
@@ -210,6 +214,12 @@ class PaperBroker:
             spread_pct=contract.spread_pct,
             historical_spread_pct=contract.historical_spread_pct,
             spread_history_pct=contract.spread_history_pct,
+            quote_timestamp=contract.quote_timestamp,
+            quote_age_seconds=contract.quote_age_seconds,
+            last_trade_price=contract.last_trade_price,
+            last_trade_size=contract.last_trade_size,
+            last_trade_timestamp=contract.last_trade_timestamp,
+            microstructure_score=contract.microstructure_score,
             liquidity_score=contract.liquidity_score,
             slippage_tier=contract.slippage_tier,
             entry_bid=decision.bid,
@@ -218,6 +228,7 @@ class PaperBroker:
             entry_limit_price=decision.limit_price,
             entry_fill_probability=decision.fill_probability,
             entry_liquidity_gap=decision.liquidity_gap,
+            entry_queue_position_pct=decision.queue_position_pct,
             chain_rank=contract.chain_rank,
             chain_candidates=contract.chain_candidates,
             theta_daily=contract.theta_daily,
@@ -251,6 +262,12 @@ class PaperBroker:
             spread_pct=contract.spread_pct,
             historical_spread_pct=contract.historical_spread_pct,
             spread_history_pct=contract.spread_history_pct,
+            quote_timestamp=contract.quote_timestamp,
+            quote_age_seconds=contract.quote_age_seconds,
+            last_trade_price=contract.last_trade_price,
+            last_trade_size=contract.last_trade_size,
+            last_trade_timestamp=contract.last_trade_timestamp,
+            microstructure_score=contract.microstructure_score,
             liquidity_score=contract.liquidity_score,
             slippage_tier=contract.slippage_tier,
             bid=round(decision.bid, 4),
@@ -259,6 +276,7 @@ class PaperBroker:
             limit_price=round(decision.limit_price, 4),
             fill_probability=round(decision.fill_probability, 4),
             liquidity_gap=decision.liquidity_gap,
+            queue_position_pct=round(decision.queue_position_pct, 4),
             chain_rank=contract.chain_rank,
             chain_candidates=contract.chain_candidates,
             theta_daily=contract.theta_daily,
@@ -310,6 +328,12 @@ class PaperBroker:
             spread_pct=contract.spread_pct,
             historical_spread_pct=contract.historical_spread_pct,
             spread_history_pct=contract.spread_history_pct,
+            quote_timestamp=contract.quote_timestamp,
+            quote_age_seconds=contract.quote_age_seconds,
+            last_trade_price=contract.last_trade_price,
+            last_trade_size=contract.last_trade_size,
+            last_trade_timestamp=contract.last_trade_timestamp,
+            microstructure_score=contract.microstructure_score,
             liquidity_score=contract.liquidity_score,
             slippage_tier=contract.slippage_tier,
             bid=round(decision.bid, 4),
@@ -318,6 +342,7 @@ class PaperBroker:
             limit_price=round(decision.limit_price, 4),
             fill_probability=round(decision.fill_probability, 4),
             liquidity_gap=decision.liquidity_gap,
+            queue_position_pct=round(decision.queue_position_pct, 4),
             chain_rank=contract.chain_rank,
             chain_candidates=contract.chain_candidates,
             theta_daily=contract.theta_daily,
@@ -380,6 +405,10 @@ class PaperBroker:
                 "open_interest": contract.open_interest,
                 "spread_history_pct": contract.spread_history_pct[-10:],
                 "slippage_tier": contract.slippage_tier,
+                "microstructure_score": contract.microstructure_score,
+                "quote_age_seconds": contract.quote_age_seconds,
+                "last_trade_price": contract.last_trade_price,
+                "last_trade_size": contract.last_trade_size,
             }
         )
         self.execution_events.append({"kind": kind, "timestamp": candle.timestamp, "payload": payload})
@@ -500,20 +529,23 @@ def simulate_option_limit_fill(
     }.get(contract.slippage_tier, 0.58)
     if side == SignalAction.BUY:
         limit_price = min(ask, mid + spread_width * aggression)
-        touched = candle.low <= limit_price or candle.source == "massive_options_snapshot"
+        touched = option_limit_touched(candle, contract, limit_price, bid, ask, side, spread_pct)
         fill_price = min(ask, limit_price)
     else:
         limit_price = max(bid, mid - spread_width * aggression)
-        touched = candle.high >= limit_price or candle.source == "massive_options_snapshot"
+        touched = option_limit_touched(candle, contract, limit_price, bid, ask, side, spread_pct)
         fill_price = max(bid, limit_price)
 
     probability = option_fill_probability(contract, spread_pct)
     liquidity_gap = option_liquidity_gap(contract, spread_pct)
     deterministic_threshold = _deterministic_fill_threshold(contract.ticker, candle.timestamp, side)
+    queue_position_pct = option_queue_position_pct(contract, spread_pct, deterministic_threshold)
     severe_gap = liquidity_gap and (
         spread_pct >= 55
         or (contract.historical_spread_pct or 0) >= 45
         or contract.liquidity_score < 0.18
+        or (0 < contract.microstructure_score < 0.12)
+        or (contract.quote_age_seconds is not None and contract.quote_age_seconds > 1800)
         or (contract.volume <= 0 and contract.open_interest < 50)
     )
     missed_reason = None
@@ -538,6 +570,10 @@ def simulate_option_limit_fill(
         historical_spread_pct=contract.historical_spread_pct,
         fill_probability=round(probability, 4),
         liquidity_gap=liquidity_gap,
+        queue_position_pct=round(queue_position_pct, 4),
+        quote_age_seconds=contract.quote_age_seconds,
+        last_trade_price=contract.last_trade_price,
+        last_trade_size=contract.last_trade_size,
         missed_reason=missed_reason,
     )
 
@@ -579,7 +615,20 @@ def option_fill_probability(contract: OptionContractCandidate, spread_pct: float
     oi_score = min(1.0, max(0, contract.open_interest) / 6000)
     spread_score = max(0.0, 1 - max(0.0, spread_pct - 3) / 45)
     tier_cap = {"tight": 0.97, "normal": 0.82, "wide": 0.58, "avoid": 0.22, "unknown": 0.45}.get(contract.slippage_tier, 0.45)
-    probability = 0.12 + contract.liquidity_score * 0.40 + volume_score * 0.18 + oi_score * 0.12 + spread_score * 0.18
+    freshness_penalty = 0.0
+    if contract.quote_age_seconds is not None:
+        freshness_penalty = min(0.35, max(0.0, contract.quote_age_seconds - 120) / 1800)
+    print_bonus = min(0.10, max(0, contract.last_trade_size or 0) / 250)
+    probability = (
+        0.08
+        + contract.liquidity_score * 0.30
+        + _effective_microstructure_score(contract, spread_pct) * 0.25
+        + volume_score * 0.12
+        + oi_score * 0.08
+        + spread_score * 0.13
+        + print_bonus
+        - freshness_penalty
+    )
     return max(0.03, min(tier_cap, probability))
 
 
@@ -587,11 +636,50 @@ def option_liquidity_gap(contract: OptionContractCandidate, spread_pct: float) -
     return (
         spread_pct >= 24
         or (contract.historical_spread_pct or 0) >= 22
+        or (0 < contract.microstructure_score < 0.25)
+        or (contract.quote_age_seconds is not None and contract.quote_age_seconds > 900)
         or contract.liquidity_score < 0.30
         or contract.slippage_tier == "avoid"
         or contract.volume < 10
         or contract.open_interest < 75
     )
+
+
+def option_limit_touched(
+    candle: Candle,
+    contract: OptionContractCandidate,
+    limit_price: float,
+    bid: float,
+    ask: float,
+    side: SignalAction,
+    spread_pct: float,
+) -> bool:
+    if candle.source != "massive_options_snapshot":
+        return candle.low <= limit_price if side == SignalAction.BUY else candle.high >= limit_price
+
+    threshold = _deterministic_fill_threshold(contract.ticker, candle.timestamp, side)
+    inside_quote = bid < limit_price < ask
+    if side == SignalAction.BUY:
+        crosses_nbbo = limit_price >= ask
+        printed_through = contract.last_trade_price is not None and contract.last_trade_price <= limit_price
+    else:
+        crosses_nbbo = limit_price <= bid
+        printed_through = contract.last_trade_price is not None and contract.last_trade_price >= limit_price
+    queue_fill = inside_quote and threshold <= option_fill_probability(contract, spread_pct) * 0.62
+    return crosses_nbbo or printed_through or queue_fill
+
+
+def option_queue_position_pct(contract: OptionContractCandidate, spread_pct: float, threshold: float) -> float:
+    depth_proxy = min(1.0, (contract.volume / 2500) * 0.45 + (contract.open_interest / 12000) * 0.35 + _effective_microstructure_score(contract, spread_pct) * 0.20)
+    spread_penalty = min(0.35, max(0, spread_pct - 5) / 80)
+    return max(0.0, min(1.0, threshold * 0.55 + (1 - depth_proxy) * 0.35 + spread_penalty))
+
+
+def _effective_microstructure_score(contract: OptionContractCandidate, spread_pct: float) -> float:
+    if contract.microstructure_score > 0:
+        return contract.microstructure_score
+    spread_quality = max(0.0, 1 - max(0.0, spread_pct - 3) / 35)
+    return max(0.0, min(1.0, contract.liquidity_score * 0.65 + spread_quality * 0.35))
 
 
 def _deterministic_fill_threshold(symbol: str, timestamp: datetime, side: SignalAction) -> float:

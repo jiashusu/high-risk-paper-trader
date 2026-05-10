@@ -90,6 +90,12 @@ export type Trade = {
   spread_pct?: number | null;
   historical_spread_pct?: number | null;
   spread_history_pct?: number[];
+  quote_timestamp?: string | null;
+  quote_age_seconds?: number | null;
+  last_trade_price?: number | null;
+  last_trade_size?: number | null;
+  last_trade_timestamp?: string | null;
+  microstructure_score?: number | null;
   liquidity_score?: number | null;
   slippage_tier?: string;
   bid?: number | null;
@@ -98,6 +104,7 @@ export type Trade = {
   limit_price?: number | null;
   fill_probability?: number | null;
   liquidity_gap?: boolean | null;
+  queue_position_pct?: number | null;
 };
 
 export type Position = {
@@ -121,6 +128,12 @@ export type Position = {
   spread_pct?: number | null;
   historical_spread_pct?: number | null;
   spread_history_pct?: number[];
+  quote_timestamp?: string | null;
+  quote_age_seconds?: number | null;
+  last_trade_price?: number | null;
+  last_trade_size?: number | null;
+  last_trade_timestamp?: string | null;
+  microstructure_score?: number | null;
   liquidity_score?: number | null;
   slippage_tier?: string;
   entry_bid?: number | null;
@@ -129,6 +142,7 @@ export type Position = {
   entry_limit_price?: number | null;
   entry_fill_probability?: number | null;
   entry_liquidity_gap?: boolean | null;
+  entry_queue_position_pct?: number | null;
 };
 
 export type PortfolioSnapshot = {
@@ -187,6 +201,10 @@ export type StrategyWalkForwardWindow = {
   train_environment: string;
   test_environment: string;
   passed: boolean;
+  ending_equity: number;
+  max_drawdown_pct: number;
+  trades: number;
+  missed_fills: number;
 };
 
 export type StrategyWalkForwardSummary = {

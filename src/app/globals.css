@@ -1210,6 +1210,43 @@ h3 {
   gap: 14px;
 }
 
+.next-action-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 16px;
+}
+
+.next-action-card h2 {
+  margin: 3px 0 6px;
+}
+
+.next-action-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.next-action-card.safe {
+  border-color: rgba(54, 227, 155, 0.26);
+  background: linear-gradient(90deg, rgba(54, 227, 155, 0.1), rgba(255, 255, 255, 0.035));
+}
+
+.next-action-card.watch {
+  border-color: rgba(255, 197, 92, 0.26);
+  background: linear-gradient(90deg, rgba(255, 197, 92, 0.1), rgba(255, 255, 255, 0.035));
+}
+
+.next-action-card.danger {
+  border-color: rgba(255, 92, 122, 0.30);
+  background: linear-gradient(90deg, rgba(255, 92, 122, 0.1), rgba(255, 255, 255, 0.035));
+}
+
 .lab-overview-grid {
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
 }
@@ -2315,7 +2352,8 @@ h3 {
   }
 
   .onboarding-hero,
-  .onboarding-mini {
+  .onboarding-mini,
+  .next-action-card {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2356,8 +2394,10 @@ h3 {
   }
 
   .trade-actions .primary-button,
-  .primary-button {
+  .primary-button,
+  .next-action-card .primary-button {
     flex: 1;
+    width: 100%;
   }
 
   .ticket-grid,

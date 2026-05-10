@@ -271,6 +271,8 @@ class OptionsDataProbe:
         details = row.get("details", {})
         day = row.get("day", {})
         greeks = row.get("greeks", {})
+        last_quote = row.get("last_quote") or {}
+        last_trade = row.get("last_trade") or {}
         try:
             ticker = details["ticker"]
             expiration = datetime.fromisoformat(details["expiration_date"]).date()
@@ -278,8 +280,18 @@ class OptionsDataProbe:
             contract_type = details["contract_type"]
             volume = int(day.get("volume") or 0)
             open_interest = int(row.get("open_interest") or 0)
-            premium = float(day.get("close") or day.get("vwap") or 0)
-            mid, bid, ask = option_quote_estimate(premium, volume, open_interest)
+            last_trade_price = _float_or_none(last_trade.get("price"))
+            premium = float(day.get("close") or day.get("vwap") or last_trade_price or 0)
+            estimated_mid, estimated_bid, estimated_ask = option_quote_estimate(premium, volume, open_interest)
+            quote_bid = _float_or_none(last_quote.get("bid") or last_quote.get("bid_price"))
+            quote_ask = _float_or_none(last_quote.get("ask") or last_quote.get("ask_price"))
+            if quote_bid and quote_ask and quote_ask > quote_bid:
+                bid = quote_bid
+                ask = quote_ask
+                mid = (bid + ask) / 2
+                premium = premium or mid
+            else:
+                mid, bid, ask = estimated_mid, estimated_bid, estimated_ask
             delta = abs(float(greeks.get("delta")))
             gamma = float(greeks["gamma"]) if greeks.get("gamma") is not None else None
             theta = float(greeks["theta"]) if greeks.get("theta") is not None else None
@@ -288,10 +300,32 @@ class OptionsDataProbe:
         except (KeyError, TypeError, ValueError):
             return None
 
+        quote_timestamp = _timestamp_from_any(
+            last_quote.get("sip_timestamp")
+            or last_quote.get("participant_timestamp")
+            or last_quote.get("last_updated")
+            or last_quote.get("timestamp")
+        )
+        last_trade_timestamp = _timestamp_from_any(
+            last_trade.get("sip_timestamp")
+            or last_trade.get("participant_timestamp")
+            or last_trade.get("timestamp")
+        )
+        now = datetime.now(UTC)
+        quote_age_seconds = max(0.0, (now - quote_timestamp).total_seconds()) if quote_timestamp else None
+        last_trade_size = _int_or_none(last_trade.get("size"))
         dte = (expiration - datetime.now(UTC).date()).days
         spread_pct = (ask - bid) / max(mid, 0.01) * 100
         liquidity_score = option_liquidity_score(volume, open_interest, spread_pct)
         slippage_tier = option_slippage_tier(liquidity_score, spread_pct)
+        microstructure_score = option_microstructure_score(
+            liquidity_score=liquidity_score,
+            spread_pct=spread_pct,
+            quote_age_seconds=quote_age_seconds,
+            last_trade_size=last_trade_size,
+            volume=volume,
+            open_interest=open_interest,
+        )
         moneyness_pct = None
         if underlying_price:
             moneyness_pct = (strike / underlying_price - 1) * 100
@@ -347,6 +381,12 @@ class OptionsDataProbe:
             dte=dte,
             score=round(score, 4),
             spread_pct=round(spread_pct, 2),
+            quote_timestamp=quote_timestamp,
+            quote_age_seconds=round(quote_age_seconds, 2) if quote_age_seconds is not None else None,
+            last_trade_price=round(last_trade_price, 4) if last_trade_price is not None else None,
+            last_trade_size=last_trade_size,
+            last_trade_timestamp=last_trade_timestamp,
+            microstructure_score=round(microstructure_score, 3),
             liquidity_score=round(liquidity_score, 3),
             slippage_tier=slippage_tier,
             moneyness_pct=round(moneyness_pct, 2) if moneyness_pct is not None else None,
@@ -449,6 +489,24 @@ def option_slippage_tier(liquidity_score: float, spread_pct: float) -> str:
     return "avoid"
 
 
+def option_microstructure_score(
+    liquidity_score: float,
+    spread_pct: float,
+    quote_age_seconds: float | None,
+    last_trade_size: int | None,
+    volume: int,
+    open_interest: int,
+) -> float:
+    freshness = 0.45
+    if quote_age_seconds is not None:
+        freshness = max(0.0, min(1.0, 1 - quote_age_seconds / 900))
+    trade_print = min(1.0, max(0, last_trade_size or 0) / 25)
+    activity = min(1.0, max(0, volume) / 2000)
+    oi_depth = min(1.0, max(0, open_interest) / 10000)
+    spread_quality = max(0.0, 1 - max(0.0, spread_pct - 2.5) / 27.5)
+    return max(0.0, min(1.0, freshness * 0.28 + trade_print * 0.18 + activity * 0.18 + oi_depth * 0.14 + spread_quality * 0.22 + liquidity_score * 0.18))
+
+
 def option_dte_risk(dte: int) -> str:
     if dte <= 0:
         return "expired"
@@ -457,6 +515,47 @@ def option_dte_risk(dte: int) -> str:
     if dte <= 7:
         return "accelerating"
     return "normal"
+
+
+def _float_or_none(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        if value is None:
+            return None
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _timestamp_from_any(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric > 10**17:
+        return datetime.fromtimestamp(numeric / 1_000_000_000, UTC)
+    if numeric > 10**14:
+        return datetime.fromtimestamp(numeric / 1_000_000, UTC)
+    if numeric > 10**11:
+        return datetime.fromtimestamp(numeric / 1000, UTC)
+    return datetime.fromtimestamp(numeric, UTC)
 
 
 def option_earnings_risk(earnings_date: date | None, expiration: date) -> str:

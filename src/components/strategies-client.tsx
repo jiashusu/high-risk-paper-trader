@@ -57,6 +57,7 @@ export function StrategiesClient() {
   const walkForward = walkForwardOrDefault(selected);
   const versionComparison = versionComparisonOrDefault(selected);
   const regimeTags = selected.regime_tags ?? [];
+  const nextAction = strategyNextAction(selected, data, walkForward, language);
 
   return (
     <>
@@ -76,6 +77,15 @@ export function StrategiesClient() {
           <FlaskConical size={14} /> {copy.labBadge}
         </span>
       </header>
+
+      <section className={`next-action-card ${nextAction.tone}`}>
+        <div>
+          <div className="panel-kicker">{copy.nextStep}</div>
+          <h2>{nextAction.title}</h2>
+          <p>{nextAction.body}</p>
+        </div>
+        <a className="primary-button" href={nextAction.href}>{nextAction.cta}</a>
+      </section>
 
       <section className="lab-overview-grid">
         <div className="panel section active-strategy-panel">
@@ -184,6 +194,9 @@ export function StrategiesClient() {
                     <span>{copy.train} <strong>{formatPct(window.train_return_pct)}</strong></span>
                     <span>{copy.test} <strong>{envLabel(window.test_environment, language)}</strong></span>
                     <span>{copy.regime} <strong>{envLabel(window.train_environment, language)}</strong></span>
+                    <span>{copy.equity} <strong>{formatUsd(window.ending_equity)}</strong></span>
+                    <span>{copy.drawdown} <strong>{formatPct(-window.max_drawdown_pct)}</strong></span>
+                    <span>{copy.trades} <strong>{window.trades}</strong></span>
                   </div>
                 </div>
               ))}
@@ -249,6 +262,53 @@ function versionComparisonOrDefault(entry: StrategyLabEntry) {
     previous_score: entry.score,
     delta: 0,
     verdict: "等待新版 API 返回策略版本对照。",
+  };
+}
+
+function strategyNextAction(entry: StrategyLabEntry, data: DashboardPayload, walkForward: ReturnType<typeof walkForwardOrDefault>, language: "en" | "zh") {
+  const zh = language === "zh";
+  if (data.realism.real_market_data_pct < 95) {
+    return {
+      tone: "danger",
+      title: zh ? "今天只观察，别开新模拟仓" : "Observe only today",
+      body: zh ? "行情数据没有过 95% 真实数据门槛，任何策略信号都可能是坏数据喂出来的。" : "Market data is below the 95% real-data gate, so any strategy signal may be polluted.",
+      cta: zh ? "查看数据真假" : "Check data",
+      href: "/data",
+    };
+  }
+  if (entry.status === "rejected" || (walkForward.windows >= 3 && walkForward.pass_rate < 0.3)) {
+    return {
+      tone: "danger",
+      title: zh ? "策略被降级，今天不要追" : "Strategy downgraded",
+      body: zh ? "样本外或风控证据不够，当前重点是查原因，不是加仓。" : "Out-of-sample or risk evidence is weak. Diagnose first; do not add risk.",
+      cta: zh ? "查看风险" : "Open risk",
+      href: "/risk",
+    };
+  }
+  if (walkForward.windows >= 3 && walkForward.out_of_sample_return_pct < 0) {
+    return {
+      tone: "watch",
+      title: zh ? "可以研究，但先降低期待" : "Research only, lower size",
+      body: zh ? "样本外收益为负，说明历史好看不等于未来能打，先继续观察。" : "Out-of-sample return is negative, so keep it in research mode.",
+      cta: zh ? "看复盘" : "Read report",
+      href: "/report",
+    };
+  }
+  if (!data.live_readiness?.ready_for_live) {
+    return {
+      tone: "safe",
+      title: zh ? "可以推进一次模拟，但真钱仍锁死" : "Run one paper tick",
+      body: zh ? "当前最合理动作是推进 forward 模拟，继续积累真实账本证据。" : "The right next move is one forward paper tick and more ledger evidence.",
+      cta: zh ? "去仪表盘" : "Open dashboard",
+      href: "/",
+    };
+  }
+  return {
+    tone: "watch",
+    title: zh ? "只进入人工复核，不自动真钱" : "Manual review only",
+    body: zh ? "即使实盘门槛亮了，也只应该生成订单草稿，由你人工确认。" : "Even if the live gate is ready, only draft orders should be reviewed manually.",
+    cta: zh ? "看周报" : "Review report",
+    href: "/report",
   };
 }
 
@@ -358,11 +418,14 @@ function getStrategiesCopy(language: "en" | "zh") {
       parameters: "Parameter version",
       dataAndRisk: "Data + risk requirements",
       walkForwardTitle: "Walk-forward / out-of-sample",
+      nextStep: "Next step",
       passed: "passed",
       failed: "failed",
       train: "train",
       test: "test",
       regime: "regime",
+      equity: "equity",
+      trades: "trades",
       versionCompare: "Version comparison",
     };
   }
@@ -403,11 +466,14 @@ function getStrategiesCopy(language: "en" | "zh") {
     parameters: "参数版本",
     dataAndRisk: "数据和风险要求",
     walkForwardTitle: "Walk-forward / 样本外验证",
+    nextStep: "下一步",
     passed: "通过",
     failed: "失败",
     train: "训练",
     test: "测试",
     regime: "环境",
+    equity: "净值",
+    trades: "交易",
     versionCompare: "版本对照",
   };
 }

@@ -45,6 +45,9 @@ def test_strategy_lab_includes_walk_forward_and_version_comparison() -> None:
 
     assert first.walk_forward.windows >= 3
     assert first.walk_forward.recent_windows
+    assert first.walk_forward.recent_windows[0].ending_equity > 0
+    assert first.walk_forward.recent_windows[0].trades >= 0
     assert first.version_comparison.current_version
     assert first.version_comparison.previous_version
+    assert first.version_comparison.current_score != first.version_comparison.previous_score or first.walk_forward.windows > 0
     assert first.regime_tags
